@@ -73,10 +73,13 @@ let
     ignoreCollisions = true;
   };
 
-  makeProg = args: pkgs.substituteAll (args // {
-    inherit (pkgs) runtimeShell;
+  makeProg = args: pkgs.substitute (args // {
     dir = "bin";
     isExecutable = true;
+
+    substitutions = args.substitutions ++ [
+      "--subst-var-by" "runtimeShell" pkgs.runtimeShell
+    ];
   });
 
   mkRootlessContainerdService = cfg:
@@ -84,22 +87,29 @@ let
       containerdArgs =
         lib.concatStringsSep " " (lib.cli.toGNUCommandLine {} cfg.args);
 
-      containerd-rootless = makeProg {
-        name = "containerd-rootless";
-        src = ./containerd-rootless.sh;
-        inherit containerdArgs;
-        path = lib.makeBinPath ([
-          containerd-rootless-child
-          pkgs.bash
-          pkgs.iproute2
-          pkgs.libselinux
-          pkgs.rootlesskit
-          pkgs.slirp4netns
-          pkgs.util-linux
-          # Need access to newuidmap from "/run/wrappers"
-          "/run/wrappers"
-        ] ++ cfg.path);
-      };
+      containerd-rootless =
+        let
+          path = lib.makeBinPath ([
+            containerd-rootless-child
+            pkgs.bash
+            pkgs.iproute2
+            pkgs.libselinux
+            pkgs.rootlesskit
+            pkgs.slirp4netns
+            pkgs.util-linux
+            # Need access to newuidmap from "/run/wrappers"
+            "/run/wrappers"
+          ] ++ cfg.path);
+        in
+          makeProg {
+            name = "containerd-rootless";
+            src = ./containerd-rootless.sh;
+
+            substitutions = [
+              "--subst-var-by" "containerdArgs" containerdArgs
+              "--subst-var-by" "path" path
+            ];
+          };
 
       mountSources = lib.concatStringsSep " " (
         builtins.map
@@ -113,21 +123,29 @@ let
           (lib.attrValues cfg.bindMounts)
       );
 
-      containerd-rootless-child = makeProg {
-        name = "containerd-rootless-child";
-        src = ./containerd-rootless-child.sh;
-        inherit mountSources mountPoints;
-        path = lib.makeBinPath ([
-          cfg.package
-          pkgs.coreutils
-          pkgs.iptables
-          pkgs.kmod
-          pkgs.runc
-          # Mount only works inside user namespaces from "/run/current-system/sw"
-          # See: https://github.com/NixOS/nixpkgs/issues/42117#issuecomment-872029461
-          "/run/current-system/sw"
-        ] ++ cfg.path);
-      };
+      containerd-rootless-child =
+        let
+          path = lib.makeBinPath ([
+            cfg.package
+            pkgs.coreutils
+            pkgs.iptables
+            pkgs.kmod
+            pkgs.runc
+            # Mount only works inside user namespaces from "/run/current-system/sw"
+            # See: https://github.com/NixOS/nixpkgs/issues/42117#issuecomment-872029461
+            "/run/current-system/sw"
+          ] ++ cfg.path);
+        in
+        makeProg {
+          name = "containerd-rootless-child";
+          src = ./containerd-rootless-child.sh;
+
+          substitutions = [
+            "--subst-var-by" "mountSources" mountSources
+            "--subst-var-by" "mountPoints" mountPoints
+            "--subst-var-by" "path" path
+          ];
+        };
 
     in {
       Unit = {
